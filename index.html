@@ -130,7 +130,6 @@ async function fetchOpenAI({ targetUrl, method, body, action }) {
 function addMessageToChat(message, sender) {
     const messageElement = document.createElement('div');
     messageElement.classList.add('p-3', 'rounded-lg', 'shadow-md', 'break-words');
-    
     if(sender === 'system' || sender === 'system-success') {
          messageElement.classList.add('text-white', 'self-center', 'text-center', 'text-sm', 'italic', 'max-w-full');
          messageElement.classList.toggle('bg-yellow-600', sender === 'system');
@@ -141,14 +140,29 @@ function addMessageToChat(message, sender) {
         messageElement.textContent = message;
     } else if (sender === 'assistant') {
         messageElement.classList.add('bg-gray-200', 'dark:bg-gray-600', 'self-start', 'w-full');
+        
+        // *** LÓGICA DE RENDERIZADO CORREGIDA Y ROBUSTA ***
         const cleanedMessage = message.replace(/【.*?】/g, '');
         const latexBlocks = [];
+        
+        // 1. Proteger el código LaTeX con un marcador de posición de comentario HTML, que es invisible.
         const protectedMessage = cleanedMessage.replace(/\\\[[\s\S]*?\\\]|\\\([\s\S]*?\\\)/g, (match) => {
-            latexBlocks.push(match); return `___MATHJAX_PLACEHOLDER_${latexBlocks.length - 1}___`;
+            latexBlocks.push(match);
+            // Usamos un comentario HTML como marcador de posición. Es seguro y no lo renderiza el navegador.
+            return `<!--MATHJAX_PLACEHOLDER_${latexBlocks.length - 1}-->`;
         });
+        
+        // 2. Convertir Markdown a HTML
         let html = marked.parse(protectedMessage);
-        html = html.replace(/___MATHJAX_PLACEHOLDER_(\d+)___/g, (match, index) => latexBlocks[parseInt(index, 10)]);
+        
+        // 3. Restaurar el código LaTeX en el HTML resultante.
+        for (let i = 0; i < latexBlocks.length; i++) {
+            html = html.replace(`<!--MATHJAX_PLACEHOLDER_${i}-->`, latexBlocks[i]);
+        }
+        
+        // Ahora el HTML está completo y correcto ANTES de insertarlo en la página.
         messageElement.innerHTML = html;
+
     } else { // error
         messageElement.classList.add('bg-red-500', 'text-white', 'self-start', 'w-full');
         messageElement.textContent = message;
@@ -172,7 +186,6 @@ async function startConversation() {
         addMessageToChat("Paso 1: Probando la conexión con el servidor...", 'system');
         await fetchOpenAI({ action: 'ping' });
         addMessageToChat("Conexión con el servidor: ¡EXITOSA!", 'system-success');
-
         addMessageToChat("Paso 2: Iniciando conversación con OpenAI...", 'system');
         const data = await fetchOpenAI({
             targetUrl: 'https://api.openai.com/v1/threads',
@@ -181,7 +194,6 @@ async function startConversation() {
         threadId = data.id;
         addMessageToChat("¡Conexión establecida! Ya puedes chatear.", 'assistant');
         toggleForm(true);
-
     } catch (error) {
          console.error("Error en la inicialización:", error);
          addMessageToChat(`FALLO EN LA INICIALIZACIÓN: ${error.message}`, 'error');

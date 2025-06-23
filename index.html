@@ -1,0 +1,196 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Asistente de Chat IA</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <script>
+      window.MathJax = {
+        tex: {
+          inlineMath: [['\\(', '\\)']],
+          displayMath: [['\\[', '\\]']]
+        },
+        svg: {
+          fontCache: 'global'
+        }
+      };
+    </script>
+    <script src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js" id="MathJax-script" async></script>
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <style>
+        body { font-family: 'Inter', sans-serif; }
+        .chat-window::-webkit-scrollbar { width: 6px; }
+        .chat-window::-webkit-scrollbar-track { background: #f1f1f1; }
+        .chat-window::-webkit-scrollbar-thumb { background: #888; border-radius: 3px; }
+        .assistant-message h3 { font-size: 1.2em; font-weight: 600; margin-top: 0.75em; margin-bottom: 0.5em; }
+        .assistant-message ul { list-style-type: disc; padding-left: 20px; }
+        .assistant-message li, .assistant-message p { margin-bottom: 0.5em; }
+    </style>
+</head>
+<body class="bg-gray-100 dark:bg-gray-900 flex items-center justify-center h-screen">
+    <div class="w-full max-w-5xl mx-auto flex flex-col h-full md:h-[95vh] bg-white dark:bg-gray-800 shadow-2xl rounded-lg">
+        <header class="p-4 border-b dark:border-gray-700 flex items-center space-x-3">
+            <div class="w-12 h-12 bg-blue-500 rounded-full flex items-center justify-center text-white text-2xl font-bold">IA</div>
+            <div>
+                <h1 class="text-xl font-bold text-gray-800 dark:text-white">Asistente Específico</h1>
+                <p class="text-sm text-green-500">● En línea</p>
+            </div>
+        </header>
+        <main id="chat-window" class="flex-grow p-6 space-y-4 overflow-y-auto chat-window"></main>
+        <div id="typing-indicator" class="px-6 pb-2 text-sm text-gray-500 dark:text-gray-400" style="display: none;">El asistente está pensando...</div>
+        <footer class="p-4 border-t dark:border-gray-700">
+            <form id="message-form" class="flex items-center space-x-3">
+                <input type="text" id="message-input" placeholder="Escribe tu mensaje aquí..." autocomplete="off" class="flex-grow p-3 bg-gray-100 dark:bg-gray-700 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500" disabled>
+                <button type="submit" id="send-button" class="bg-blue-500 text-white rounded-lg p-3 hover:bg-blue-600 focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:bg-blue-300" disabled>
+                    <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14 5l7 7m0 0l-7 7m7-7H3"></path></svg>
+                </button>
+            </form>
+        </footer>
+    </div>
+<script>
+const ASSISTANT_ID = "asst_xZuZKYSuBRmZwaPsDdcLsMGL";
+const chatWindow = document.getElementById('chat-window');
+const messageForm = document.getElementById('message-form');
+const messageInput = document.getElementById('message-input');
+let threadId = null;
+
+messageForm.addEventListener('submit', handleFormSubmit);
+
+async function handleFormSubmit(e) {
+    e.preventDefault();
+    const userMessage = messageInput.value.trim();
+    if (!userMessage || !threadId) return;
+    addMessageToChat(userMessage, 'user');
+    messageInput.value = '';
+    toggleForm(false);
+    try {
+        await fetchOpenAI({
+            targetUrl: `https://api.openai.com/v1/threads/${threadId}/messages`,
+            method: 'POST',
+            body: { role: 'user', content: userMessage }
+        });
+        const run = await fetchOpenAI({
+            targetUrl: `https://api.openai.com/v1/threads/${threadId}/runs`,
+            method: 'POST',
+            body: { assistant_id: ASSISTANT_ID }
+        });
+        await pollRunStatus(threadId, run.id);
+        const messagesData = await fetchOpenAI({
+            targetUrl: `https://api.openai.com/v1/threads/${threadId}/messages`,
+            method: 'GET'
+        });
+        const assistantMessage = messagesData.data.find(m => m.run_id === run.id && m.role === 'assistant');
+        if (assistantMessage) {
+            const messageContent = assistantMessage.content[0].text.value;
+            addMessageToChat(messageContent, 'assistant');
+        }
+    } catch (error) {
+        addMessageToChat(`Error durante la conversación: ${error.message}`, 'error');
+    } finally {
+        toggleForm(true);
+    }
+}
+async function pollRunStatus(threadId, runId) {
+    return new Promise((resolve, reject) => {
+        const interval = setInterval(async () => {
+            try {
+                const runStatus = await fetchOpenAI({
+                    targetUrl: `https://api.openai.com/v1/threads/${threadId}/runs/${runId}`,
+                    method: 'GET'
+                });
+                if (runStatus.status === 'completed') {
+                    clearInterval(interval); resolve();
+                } else if (['failed', 'cancelled', 'expired'].includes(runStatus.status)) {
+                    clearInterval(interval); reject(new Error(`La ejecución falló: ${runStatus.last_error?.message || 'Error desconocido'}`));
+                }
+            } catch (error) {
+                clearInterval(interval); reject(error);
+            }
+        }, 2000);
+    });
+}
+async function fetchOpenAI({ targetUrl, method, body, action }) {
+    const proxyUrl = '/.netlify/functions/openai-proxy';
+    const requestBody = action ? { action } : { targetUrl, method, body };
+    const response = await fetch(proxyUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(requestBody),
+    });
+    if (!response.ok) {
+        const errorData = await response.json().catch(() => ({ error: 'La respuesta del servidor no es un JSON válido.' }));
+        throw new Error(errorData.error || `Error HTTP ${response.status}`);
+    }
+    return response.json();
+}
+function addMessageToChat(message, sender) {
+    const messageElement = document.createElement('div');
+    messageElement.classList.add('p-3', 'rounded-lg', 'shadow-md', 'break-words');
+    
+    if(sender === 'system' || sender === 'system-success') {
+         messageElement.classList.add('text-white', 'self-center', 'text-center', 'text-sm', 'italic', 'max-w-full');
+         messageElement.classList.toggle('bg-yellow-600', sender === 'system');
+         messageElement.classList.toggle('bg-green-600', sender === 'system-success');
+         messageElement.textContent = message;
+    } else if (sender === 'user') {
+        messageElement.classList.add('bg-blue-500', 'text-white', 'self-end', 'max-w-xl');
+        messageElement.textContent = message;
+    } else if (sender === 'assistant') {
+        messageElement.classList.add('bg-gray-200', 'dark:bg-gray-600', 'self-start', 'w-full');
+        const cleanedMessage = message.replace(/【.*?】/g, '');
+        const latexBlocks = [];
+        const protectedMessage = cleanedMessage.replace(/\\\[[\s\S]*?\\\]|\\\([\s\S]*?\\\)/g, (match) => {
+            latexBlocks.push(match); return `___MATHJAX_PLACEHOLDER_${latexBlocks.length - 1}___`;
+        });
+        let html = marked.parse(protectedMessage);
+        html = html.replace(/___MATHJAX_PLACEHOLDER_(\d+)___/g, (match, index) => latexBlocks[parseInt(index, 10)]);
+        messageElement.innerHTML = html;
+    } else { // error
+        messageElement.classList.add('bg-red-500', 'text-white', 'self-start', 'w-full');
+        messageElement.textContent = message;
+    }
+    chatWindow.appendChild(messageElement);
+    if (sender === 'assistant' && typeof MathJax !== 'undefined') {
+        MathJax.typesetPromise([messageElement]).catch((err) => console.log('Error de MathJax: ', err));
+    }
+    chatWindow.scrollTop = chatWindow.scrollHeight;
+}
+function toggleForm(enabled) {
+    const sendButton = document.getElementById('send-button');
+    const typingIndicator = document.getElementById('typing-indicator');
+    messageInput.disabled = !enabled;
+    sendButton.disabled = !enabled;
+    typingIndicator.style.display = enabled ? 'none' : 'block';
+    if (enabled) messageInput.focus();
+}
+async function startConversation() {
+    try {
+        addMessageToChat("Paso 1: Probando la conexión con el servidor...", 'system');
+        await fetchOpenAI({ action: 'ping' });
+        addMessageToChat("Conexión con el servidor: ¡EXITOSA!", 'system-success');
+
+        addMessageToChat("Paso 2: Iniciando conversación con OpenAI...", 'system');
+        const data = await fetchOpenAI({
+            targetUrl: 'https://api.openai.com/v1/threads',
+            method: 'POST',
+        });
+        threadId = data.id;
+        addMessageToChat("¡Conexión establecida! Ya puedes chatear.", 'assistant');
+        toggleForm(true);
+
+    } catch (error) {
+         console.error("Error en la inicialización:", error);
+         addMessageToChat(`FALLO EN LA INICIALIZACIÓN: ${error.message}`, 'error');
+         addMessageToChat("Por favor, revisa que la API KEY esté bien configurada en Netlify y que no haya errores en la consola de funciones de Netlify.", 'error');
+         toggleForm(false);
+         document.getElementById('typing-indicator').style.display = 'none';
+    }
+}
+window.onload = () => { startConversation(); };
+</script>
+</body>
+</html>

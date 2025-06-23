@@ -1,0 +1,6 @@
+# Archivo de configuración para Netlify.
+# Le indica a Netlify dónde están nuestras funciones de backend.
+
+[functions]
+  directory = "netlify/functions/"
+

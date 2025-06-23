@@ -141,17 +141,21 @@ function addMessageToChat(message, sender) {
         messageElement.textContent = message;
     } else if (sender === 'assistant') {
         messageElement.classList.add('bg-gray-200', 'dark:bg-gray-600', 'self-start', 'w-full');
-        const cleanedMessage = message.replace(/【.*?】/g, '');
-        const latexBlocks = [];
-        const protectedMessage = cleanedMessage.replace(/\\\[[\s\S]*?\\\]|\\\([\s\S]*?\\\)/g, (match) => {
-            latexBlocks.push(match);
-            return `<!--MATHJAX_PLACEHOLDER_${latexBlocks.length - 1}-->`;
+        
+        // *** LÓGICA DE NORMALIZACIÓN Y RENDERIZADO FINAL ***
+        
+        // 1. Limpiar anotaciones de fuente como 【...】
+        let processedMessage = message.replace(/【.*?】/g, '');
+
+        // 2. FORZAR ESTÁNDAR: Detectar fórmulas en bloques de código y convertirlas a LaTeX.
+        processedMessage = processedMessage.replace(/```(?:\w*\n)?([\s\S]+?)```/g, (match, formulaContent) => {
+             // Reemplaza el bloque de código por un bloque de display math de LaTeX.
+            return `\\[${formulaContent.trim()}\\]`;
         });
-        let html = marked.parse(protectedMessage);
-        for (let i = 0; i < latexBlocks.length; i++) {
-            html = html.replace(`<!--MATHJAX_PLACEHOLDER_${i}-->`, latexBlocks[i]);
-        }
-        messageElement.innerHTML = html;
+        
+        // 3. Renderizar el resto como Markdown.
+        messageElement.innerHTML = marked.parse(processedMessage);
+
     } else { // error
         messageElement.classList.add('bg-red-500', 'text-white', 'self-start', 'w-full');
         messageElement.textContent = message;
@@ -159,6 +163,7 @@ function addMessageToChat(message, sender) {
     
     chatWindow.appendChild(messageElement);
 
+    // 4. Procesar el resultado con MathJax y hacerlo visible solo cuando esté listo.
     if (sender === 'assistant' && typeof MathJax !== 'undefined') {
         MathJax.typesetPromise([messageElement])
             .catch((err) => console.log('Error de MathJax: ', err))
